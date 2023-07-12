@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 
 	//"crypto/dsa" //depreciated
@@ -1594,7 +1595,7 @@ func ReadDiffFile(MP3DiffFileName string) []float64 {
 	return DiffFile
 }
 
-func ReadDB(md5Sum string) (Database, string) {
+func ReadDB(md5Sum string) (Database, string, string) {
 	var Entry Database
 	var filename string
 	var CompleteFilename string
@@ -1613,11 +1614,11 @@ func ReadDB(md5Sum string) (Database, string) {
 		}
 
 	}
-	if MP3DiffFileName != "" || CompleteFilename != "" {
+	if MP3DiffFileName != "" && CompleteFilename != "" {
 
-		if _, err := os.Stat(MP3DiffFileName); err == nil { //we just need one of the two.
-			return Entry, MP3DiffFileName
-		}
+		//if _, err := os.Stat(MP3DiffFileName); err == nil { //we just need one of the two.
+		//	return Entry, MP3DiffFileName
+		//}
 
 		file, err := os.Open("DATABASE/" + CompleteFilename)
 		if err != nil {
@@ -1652,7 +1653,7 @@ func ReadDB(md5Sum string) (Database, string) {
 
 		file.Close()
 	}
-	return Entry, MP3DiffFileName
+	return Entry, MP3DiffFileName, CompleteFilename
 }
 
 func HuntDBDir() []string {
@@ -1796,7 +1797,7 @@ func RebuildWaveFromMP3(Modded_MP3 string, Modded string, MP3DiffFileName string
 		MP3Frames := Frame2Float64(parseRawData(DiffWaveStruct.WaveFmt, DiffWaveStruct.RawData))
 		MaxIndexTemp := len(MP3Frames)
 
-		_, MP3DiffFileName := ReadDB(FileChecksum(Modded_MP3))
+		_, MP3DiffFileName, _ := ReadDB(FileChecksum(Modded_MP3))
 
 		RebuiltMP3Diff := ReadDiffFile(MP3DiffFileName)
 
@@ -1832,7 +1833,7 @@ func RebuildWaveFromMP3(Modded_MP3 string, Modded string, MP3DiffFileName string
 		MP3Frames := Frame2Float64(parseRawData(DiffWaveStruct.WaveFmt, DiffWaveStruct.RawData))
 		MaxIndexTemp := len(MP3Frames)
 
-		_, DiffFilename := ReadDB(FileChecksum(Modded_MP3))
+		_, DiffFilename, _ := ReadDB(FileChecksum(Modded_MP3))
 
 		RebuiltMP3Diff := ReadDiffFile(DiffFilename)
 		i := 0
@@ -1904,7 +1905,7 @@ func SwitchRamOrFile(CheckSum string, Entries []Database, KeysEntries []string) 
 			BandpassFilter = Entry.BandpassFilter
 			OutOfBoundsFrames = Entry.MissingBits
 		} else { //from disk then
-			Entry, MP3DiffFileName := ReadDB(CheckSum)
+			Entry, MP3DiffFileName, _ := ReadDB(CheckSum)
 			if MP3DiffFileName != "" { //Prefer rebuilding the MP3
 				///)(*&^%$#@!HERE)
 			} else {
@@ -1947,7 +1948,7 @@ func GoHunting(OriginalWav string, OriginalData string, Modded string, Modded_MP
 
 	//BandPassFilter, OutOfBoundsFrames, MergedFrames, WaveStruct, CheckSum := ReadWriteModded(OriginalWav, OriginalData, Modded, Modded_MP3)
 	RebuildEntryMP3, WaveStruct := RebuildWaveFromMP3(Modded_MP3, Modded, Diff_Recovered, Wav_OutFile)
-	Entry, _ := ReadDB(FileChecksum(Modded_MP3))
+	Entry, _, _ := ReadDB(FileChecksum(Modded_MP3))
 	recovered_modded := Hunt(Modded, Modded_MP3, Wav_OutFile, WaveStruct, Entry.BandpassFilter, Entry.MissingBits, RebuildEntryMP3)
 	return recovered_modded, Entries
 }
@@ -2093,6 +2094,48 @@ func PutRootCA(Conn *net.TCPConn, CaCertificate []byte) {
 	}
 }
 
+func FetchIntermediaryCert(Conn *net.TCPConn) []byte {
+
+	bRootCa := make([]byte, 10485760) //10MB
+
+	n, err := Conn.Read(bRootCa)
+	if err != nil {
+		panic(err)
+	}
+
+	return bRootCa[:n]
+
+}
+
+func PutIntermediaryCert(Conn *net.TCPConn, Certificate []byte) {
+
+	_, err := Conn.Write(Certificate)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func FetchIntermediaryPrivateKey(Conn *net.TCPConn) []byte {
+
+	bRootCa := make([]byte, 10485760) //10MB
+
+	n, err := Conn.Read(bRootCa)
+	if err != nil {
+		panic(err)
+	}
+
+	return bRootCa[:n]
+
+}
+
+func PutIntermediaryPrivateKey(Conn *net.TCPConn, Private_Key_Pem_bytes []byte) {
+
+	_, err := Conn.Write(Private_Key_Pem_bytes)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func GetlocalIP() net.IP {
 	ifaces, _ := net.Interfaces()
 	// handle err
@@ -2116,9 +2159,12 @@ func GetlocalIP() net.IP {
 }
 
 func StartSSLClient(Mp3_Modded string, ip string, port string, External_IP string) { //, CertFile string, KeyFile string) {
+	//buffer_Downloaded_File := make([]byte, 65535)
+	//var Downloaded_File []byte
+
 	//var SSL_packet []byte
-	var Uploaded_File []byte
-	var NbEntriesDiffFile string
+	//var Uploaded_File []byte
+	//var NbEntriesDiffFile string
 
 	//fmt.Println("CLIENT_STARTED!")
 
@@ -2160,18 +2206,34 @@ func StartSSLClient(Mp3_Modded string, ip string, port string, External_IP strin
 
 	PutRootCA(TCP_Conn, CaCertificate)
 
-	TCP_Conn.Close()
-
-	time.Sleep(time.Millisecond * 1000) ///TODO...DROP this on the internet.
-
-	Certificate, _, Private_Key_Pem_bytes := ForgeCertificate(IP.String(), false, true, CaCertificate, CAPrivateKey) //CA Signed Certificate
-
-	x509Certificate, err := x509.ParseCertificate(Certificate)
+	x509ServerCACertificate, err := x509.ParseCertificate(Server_CA)
 	if err != nil {
 		panic(err)
 	}
 
-	x509ServerCACertificate, err := x509.ParseCertificate(Server_CA)
+	client_Hostname := x509ServerCACertificate.Subject.CommonName
+
+	//Remote_IP := strings.Split(TCP_Conn.RemoteAddr().String(), ":")[0]
+
+	ClientCertificate, _, Private_Key_Pem_bytes := ForgeCertificate(client_Hostname, ip, false, true, CaCertificate, CAPrivateKey) //CA Signed Certificate
+
+	//ServerCertificate, _, Private_Key_Pem_bytes := ForgeCertificate(client_Hostname, Remote_IP, false, true, CaCertificate, CAPrivateKey) //CA Signed Certificate
+
+	//ClientCertificate := FetchIntermediaryCert(TCP_Conn) //getting the forged intermedidary cert by the server.
+
+	//PutIntermediaryCert(TCP_Conn, ServerCertificate) //issuing...to the server.
+
+	//ServerPEMPrivateKey := FetchIntermediaryPrivateKey(TCP_Conn)
+
+	//PutIntermediaryPrivateKey(TCP_Conn, Private_Key_Pem_bytes)
+
+	TCP_Conn.Close()
+
+	time.Sleep(time.Millisecond * 1000) ///TODO...DROP this on the internet.
+
+	//Certificate, _, Private_Key_Pem_bytes := ForgeCertificate(IP.String(), false, true, CaCertificate, CAPrivateKey) //CA Signed Certificate
+
+	x509Certificate, err := x509.ParseCertificate(ClientCertificate)
 	if err != nil {
 		panic(err)
 	}
@@ -2202,22 +2264,53 @@ func StartSSLClient(Mp3_Modded string, ip string, port string, External_IP strin
 
 	var Private_Key_Pem pem.Block
 	Private_Key_Pem.Type = "PRIVATE KEY"
-	Private_Key_Pem.Bytes = Private_Key_Pem_bytes
+	Private_Key_Pem.Bytes = Private_Key_Pem_bytes //ServerPEMPrivateKey
 
-	roots := x509.NewCertPool()
-	roots.AddCert(x509ServerCACertificate)
+	rootsCA := x509.NewCertPool()
+	rootsCA.AddCert(x509ServerCACertificate) //x509ServerCACertificate
+	//rootsCA.AddCert(x509CACertificate)       //Client
+	//clientCA := x509.NewCertPool()
+	//clientCA.AddCert(x509ServerCACertificate)
+
 	//roots.AddCert(x509CACertificate)
 	//roots.AddCert(x509Certificate)
 	Configuration := tls.Config{}
-	Configuration.RootCAs = roots
-	//tls_Certificate, err := tls.X509KeyPair(pem.EncodeToMemory(&Certificate_Pem), pem.EncodeToMemory(&Private_Key_Pem))
+	Configuration.RootCAs = rootsCA
+	//Configuration.ClientCAs = clientCA
+
+	Configuration.ServerName = x509ServerCACertificate.Subject.CommonName //x509ServerCACertificate.Subject.CommonName
+
+	tls_Certificate, err := tls.X509KeyPair(pem.EncodeToMemory(&Certificate_Pem), pem.EncodeToMemory(&Private_Key_Pem))
 	if err != nil {
 		panic(err)
 	}
 
+	//f, err = os.Create("PrivateKey.PEM")
+	//if err != nil {
+	//	panic(err)
+	//}
+	//f.Write(pem.EncodeToMemory(&Private_Key_Pem))
+	//f.Close()
+
+	tls_Certificate.Leaf = x509Certificate
 	//tls_Certificate.PrivateKey = PrivateKey //HERE
 
-	//Configuration.Certificates = append(Configuration.Certificates, tls_Certificate)
+	Configuration.ClientSessionCache = nil
+	Configuration.Certificates = append(Configuration.Certificates, tls_Certificate)
+
+	h, err := os.Create("ClientIntermediary.crt")
+	if err != nil {
+		panic(err)
+	}
+	h.Write(tls_Certificate.Leaf.Raw)
+	h.Close()
+
+	h, err = os.Create("ClientCA.crt")
+	if err != nil {
+		panic(err)
+	}
+	h.Write(CaCertificate)
+	h.Close()
 
 	//Configuration.InsecureSkipVerify = true
 	Configuration.MinVersion = tls.VersionTLS12
@@ -2226,7 +2319,7 @@ func StartSSLClient(Mp3_Modded string, ip string, port string, External_IP strin
 	//AllowedCiphers := []uint16{tls.TLS_CHACHA20_POLY1305_SHA256}
 	//Configuration.CipherSuites = AllowedCiphers
 
-	Configuration.ServerName = x509ServerCACertificate.Subject.CommonName
+	//Configuration.ServerName = x509ServerCACertificate.Subject.CommonName
 	//tls.Client()
 
 	/*_ = &tls.Config{
@@ -2251,9 +2344,9 @@ func StartSSLClient(Mp3_Modded string, ip string, port string, External_IP strin
 	if err != nil {
 		panic("failed to connect: " + err.Error())
 	}
-	tls_Conn := tls.Client(net_Conn, &Configuration)
+	tls_Conn := tls.Client(net_Conn, &Configuration) //tls.Client
 
-	err = tls_Conn.SetDeadline(time.Now().Add(time.Minute)) //1 minute and a half
+	err = tls_Conn.SetDeadline(time.Now().Add(time.Minute)) //1 Minute
 	if err != nil {
 		panic(err)
 	}
@@ -2280,16 +2373,44 @@ func StartSSLClient(Mp3_Modded string, ip string, port string, External_IP strin
 			break
 		}
 	}*/
-	_, err = tls_Conn.Write(MP3_Bytes)
-	if err != nil {
-		panic(err)
+
+	//tls_Conn.SetReadBuffer(65535)
+
+	const MAXMTU = 1402
+	//var TotalWrote int
+	buffer_MP3_Bytes := bufio.NewWriter(tls_Conn)
+	i := 0
+	for {
+		if ((i * MAXMTU) + MAXMTU) < len(MP3_Bytes) {
+			_, err := buffer_MP3_Bytes.Write(MP3_Bytes[i*MAXMTU : (i*MAXMTU)+MAXMTU])
+			if err != nil {
+				panic(err)
+			}
+			//TotalWrote += n
+			i++
+		} else {
+			_, err := buffer_MP3_Bytes.Write(MP3_Bytes[i*MAXMTU:])
+			if err != nil {
+				panic(err)
+			}
+			//TotalWrote += n
+			break
+		}
 	}
-	fmt.Println("Receiving...")
-	buffer := make([]byte, 1073741824) //1Gig
-	_, err = tls_Conn.Read(buffer)
+
+	buffer_MP3_Bytes.Flush()
+
+	//_, err = tls_Conn.Write(MP3_Bytes)
+	//if err != nil {
+	//	panic(err)
+	//}
+
+	//fmt.Println("Receiving...")
+	//buffer := make([]byte, 1073741824) //1Gig
+	//_, err = tls_Conn.Read(buffer)
 	//NbEntriesDiffFile = strings.Split(string(buffer2), "||DIFF||")[1]
 
-	fmt.Println("Receving Database ...")
+	fmt.Println("Receving Databases ...")
 
 	if _, err := os.Stat("DATABASE"); os.IsNotExist(err) {
 		err := os.Mkdir("DATABASE", os.ModePerm)
@@ -2298,20 +2419,193 @@ func StartSSLClient(Mp3_Modded string, ip string, port string, External_IP strin
 		}
 	}
 
-	Downloaded := md5.New()
-	Downloaded.Write(MP3_Bytes)
+	ReceiveDatabases(tls_Conn)
 
-	fmt.Println("Writing DATABASE ...")
+}
 
-	f, err = os.Create(hex.EncodeToString(Downloaded.Sum(nil)) + "||DIFF||" + NbEntriesDiffFile) //for test purposes
+func ReceiveDatabases(tls_Conn *tls.Conn) {
+
+	err := tls_Conn.SetDeadline(time.Now().Add(time.Second * 10))
 	if err != nil {
 		panic(err)
 	}
 
-	f.Write(Uploaded_File)
+	buffer_Downloaded_File := make([]byte, 65535)
+	var Database []byte
+	var Database2 []byte
+	var DBFilename string
+	var DBFilename2 string
+	Total_Bytes := 0
+	for {
+		n, err := tls_Conn.Read(buffer_Downloaded_File) //NetConn //Read
+		if err != nil {
+			//fmt.Println(n)
+			break //io.timeout || EOF
+		}
+		//if len(leftover) > 0 {
+		//	Database = append(Database, leftover...) //the previous file bytes...
+		//	leftover = []byte{}                      //...destroyed.
+		//}
+		Database = append(Database, buffer_Downloaded_File[:n]...)
+		Total_Bytes += n
+		tls_Conn.SetReadDeadline(time.Now().Add(time.Second * 10))
+	}
 
+	Decoded_text := strings.Split(string(Database), "!@#$%^&*()")
+	//fmt.Println("DECODED_TEXT=", len(Decoded_text))
+
+	if len(Decoded_text) > 1 {
+		Database = []byte(Decoded_text[0])
+		Database2 = []byte(strings.Split(Decoded_text[1], ")(*&^%$#@!")[1])
+		//fmt.Println(len(Database))
+		//Total_Bytes = Total_Bytes - len(Decoded_text[1]) - len("!@#$%^&*()")
+		DBFilename = strings.Split(Decoded_text[1], ")(*&^%$#@!")[0]
+		DBFilename2 = strings.Split(Decoded_text[2], ")(*&^%$#@!")[0]
+		//fmt.Println(DBFilename)
+	}
+
+	fmt.Println("Writing DATABASE ...", DBFilename)
+	//fmt.Println(Total_Bytes)
+
+	f, err := os.Create("DATABASE/" + DBFilename)
+	if err != nil {
+		panic(err)
+	}
+	f.Write(Database)
 	f.Close()
 
+	fmt.Println("Writing DATABASE ...", DBFilename2)
+	//fmt.Println(Total_Bytes)
+
+	f, err = os.Create("DATABASE/" + DBFilename2)
+	if err != nil {
+		panic(err)
+	}
+	f.Write(Database2)
+	f.Close()
+
+}
+
+func PrepDatabase(DBFilename string, Database []byte) []byte {
+	/*tls_Conn.SetDeadline(time.Now().Add(time.Minute * 2))
+	const MAXMTU = 1402
+	var TotalWrote int
+	buffer_Database := bufio.NewWriter(tls_Conn.NetConn())
+	//fmt.Println(buffer_Database.Size()) //4096
+	var last_Packet []byte
+	i := 0
+	for {
+		//fmt.Println("BYTES=", ((i * MAXMTU) + MAXMTU), " of ", len(Database))
+		if ((i * MAXMTU) + MAXMTU) < len(Database) {
+			n, err := buffer_Database.Write(Database[i*MAXMTU : (i*MAXMTU)+MAXMTU])
+			//fmt.Println(n)
+			if err != nil {
+				//if errors.Is(err, io.EOF) {
+				//	tls_Conn.SetDeadline(time.Now().Add(time.Second))
+				//	continue
+				//	}
+				//} else {
+				//	panic(err)
+				//}
+				panic(err)
+			}
+			TotalWrote += n
+		} else { //last packet
+			last_Packet = append(last_Packet, Database[i*MAXMTU:]...)
+			last_Packet = append(last_Packet, []byte("!@#$%^&*()")...)
+			//fmt.Println("LAST_PACKET=", DBFilename)
+			last_Packet = append(last_Packet, []byte(DBFilename)...)
+			last_Packet = append(last_Packet, []byte(")(*&^%$#@!")...) //end marker.
+			n, err := buffer_Database.Write(last_Packet)
+			if err != nil {
+				panic(err)
+			}
+			TotalWrote += n - len("!@#$%^&*()") - len(DBFilename) - len(")(*&^%$#@!")
+			break
+
+		}
+		i++
+		tls_Conn.SetDeadline(time.Now().Add(time.Minute))
+	}
+
+	buffer_Database.Flush()
+	//fmt.Println("BytesWritten=", TotalWrote, " of ", len(Database))
+	if TotalWrote == len(Database) {
+		fmt.Println(DBFilename, " transfered successfully...")
+		buffer_Database.Write([]byte(DBFilename)) //and the corresponding filename.
+		return true
+	} else {
+		panic("Something went wrong - try again.")
+	}*/
+
+	Database = append(Database, []byte("!@#$%^&*()")...)
+	Database = append(Database, []byte(DBFilename)...)
+	Database = append(Database, []byte(")(*&^%$#@!")...)
+
+	return Database
+}
+
+func SendDatabases(tls_Conn *tls.Conn, CompleteFilename string, Data_Complete []byte, MP3DiffFileName string, Data_MP3Diff []byte) int {
+	fmt.Println("Sending Databases ...")
+
+	var Database []byte
+
+	/*r, w := io.Pipe()
+
+	PipeWriter := bufio.NewWriter(w)
+	fmt.Println("Pipewriter")
+	tlsWriter := bufio.NewWriter(tls_Conn)
+	fmt.Println("tlswriter")
+
+	nn, err := PipeWriter.Write(PrepDatabase(CompleteFilename, Data_Complete))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(nn, "bytes--->Piping done-->", CompleteFilename)
+	nn, err = PipeWriter.Write(PrepDatabase(MP3DiffFileName, Data_MP3Diff))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(nn, "bytes--->Piping done-->", MP3DiffFileName)
+
+	n, err := tlsWriter.ReadFrom(r)
+	if err != nil {
+		panic(err)
+	}
+	*/ //NO GOOD!
+
+	Database = append(Database, PrepDatabase(CompleteFilename, Data_Complete)...)
+	Database = append(Database, PrepDatabase(MP3DiffFileName, Data_MP3Diff)...)
+
+	//fmt.Println(len(Database))
+
+	const MAXMTU = 1402
+	var TotalWrote int
+	buffer_Database := bufio.NewWriter(tls_Conn.NetConn()) //without.
+	i := 0
+	for {
+		if ((i * MAXMTU) + MAXMTU) < len(Database) {
+			n, err := buffer_Database.Write(Database[i*MAXMTU : (i*MAXMTU)+MAXMTU])
+			if err != nil {
+				panic(err)
+			}
+			TotalWrote += n
+			i++
+		} else {
+			n, err := buffer_Database.Write(Database[i*MAXMTU:])
+			if err != nil {
+				panic(err)
+			}
+			TotalWrote += n
+			break
+		}
+	}
+
+	buffer_Database.Flush()
+
+	fmt.Println(TotalWrote)
+
+	return TotalWrote
 }
 
 func RandStringBytesMaskImprSrcSB(n int) string {
@@ -2342,13 +2636,13 @@ func RandStringBytesMaskImprSrcSB(n int) string {
 	return sb.String()
 }
 
-func ForgeCertificate(IP string, ca bool, CASigned bool, CaCertificate []byte, CAPrivateKey *ecdsa.PrivateKey) ([]byte, *ecdsa.PrivateKey, []byte) {
+func ForgeCertificate(client_Hostname string, IP string, ca bool, CASigned bool, CaCertificate []byte, CAPrivateKey *ecdsa.PrivateKey) ([]byte, *ecdsa.PrivateKey, []byte) {
 
 	random := rand.Reader
 	var Private_Key_Pem []byte
 	var Certificate []byte
 	var IPAddresses []net.IP
-	var Organizations []string
+	//var Organizations []string
 	var DNSs []string
 	var err error
 
@@ -2357,8 +2651,10 @@ func ForgeCertificate(IP string, ca bool, CASigned bool, CaCertificate []byte, C
 	IPAddresses = append(IPAddresses, net_IP)
 	HostName, _ := os.Hostname()
 
-	Organization := string(RandStringBytesMaskImprSrcSB(rand2.Intn(32-8) + 8))
-	Organizations = append(Organizations, Organization)
+	//Organization := string(RandStringBytesMaskImprSrcSB(rand2.Intn(32-8) + 8))
+	//Organizations = append(Organizations, Organization)
+
+	x509CaCertificate, _ := x509.ParseCertificate(CaCertificate)
 	Private_Key, _ := ecdsa.GenerateKey(elliptic.P521(), random)
 
 	now := time.Now()
@@ -2374,20 +2670,25 @@ func ForgeCertificate(IP string, ca bool, CASigned bool, CaCertificate []byte, C
 
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(int64(rand2.Intn(math.MaxInt64))),
-		Subject: pkix.Name{
-			CommonName:   HostName,
-			Organization: Organizations,
-		},
+		//Subject: pkix.Name{
+		//	CommonName:   HostName,
+		//	Organization: Organizations,
+		//},
+		Subject: x509CaCertificate.Issuer,
+		Issuer:  x509CaCertificate.Issuer,
+
 		NotBefore: now,
 		NotAfter:  then,
 		//SubjectKeyId:          []byte{1, 2, 3, 4},
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  ca,
 		DNSNames:              DNSs,
-		IPAddresses:           IPAddresses,
-		PublicKeyAlgorithm:    x509.ECDSA,
-		PublicKey:             &Private_Key.PublicKey,
+		//IPAddresses:           IPAddresses,
+		PublicKeyAlgorithm: x509.ECDSA,
+		PublicKey:          &Private_Key.PublicKey,
+		MaxPathLen:         -1,
 	}
 	if !CASigned {
 		Certificate, err = x509.CreateCertificate(random, &template, &template, &Private_Key.PublicKey, Private_Key)
@@ -2446,6 +2747,10 @@ func ForgeCACertificate(IP string, ca bool, CASigned bool) ([]byte, *ecdsa.Priva
 			CommonName:   HostName,
 			Organization: Organizations,
 		},
+		Issuer: pkix.Name{
+			CommonName:   HostName,
+			Organization: Organizations,
+		},
 		NotBefore: now,
 		NotAfter:  then,
 		//SubjectKeyId:          []byte{1, 2, 3, 4},
@@ -2453,9 +2758,9 @@ func ForgeCACertificate(IP string, ca bool, CASigned bool) ([]byte, *ecdsa.Priva
 		BasicConstraintsValid: true,
 		IsCA:                  ca,
 		DNSNames:              DNSs,
-		IPAddresses:           IPAddresses,
-		PublicKeyAlgorithm:    x509.ECDSA,
-		PublicKey:             &Private_Key.PublicKey,
+		//IPAddresses:           IPAddresses,
+		PublicKeyAlgorithm: x509.ECDSA,
+		PublicKey:          &Private_Key.PublicKey,
 	}
 
 	Certificate, err = x509.CreateCertificate(random, &template, &template, &Private_Key.PublicKey, Private_Key)
@@ -2489,53 +2794,11 @@ func ForgeCACertificate(IP string, ca bool, CASigned bool) ([]byte, *ecdsa.Priva
 //}
 
 func StartSSLServer(ip string) {
+	buffer_Uploaded_File := make([]byte, 65535)
+	var Uploaded_File []byte
 
 	CaCertificate, CAPrivateKey, _ := ForgeCACertificate(ip, true, false) //Self-Signed CA
 
-	Certificate, _, Private_Key_Pem_bytes := ForgeCertificate(ip, false, true, CaCertificate, CAPrivateKey) //CA Signed Certificate
-
-	//x509CaCertificate, err := x509.ParseCertificate(CaCertificate)
-
-	x509Certificate, err := x509.ParseCertificate(Certificate)
-	if err != nil {
-		panic(err)
-	}
-
-	x509CaCertificate, err := x509.ParseCertificate(CaCertificate)
-	if err != nil {
-		panic(err)
-	}
-
-	var Certificate_Pem pem.Block
-	Certificate_Pem.Type = "CERTIFICATE"
-	Certificate_Pem.Bytes = x509Certificate.Raw
-
-	var Private_Key_Pem pem.Block
-	Private_Key_Pem.Type = "PRIVATE KEY"
-	Private_Key_Pem.Bytes = Private_Key_Pem_bytes
-
-	//fmt.Println(string(pem.EncodeToMemory(&Private_Key_Pem)))
-
-	tls_Certificate, err := tls.X509KeyPair(pem.EncodeToMemory(&Certificate_Pem), pem.EncodeToMemory(&Private_Key_Pem))
-	if err != nil {
-		panic(err)
-	}
-
-	tls_Certificate.Leaf = x509Certificate
-	//tls_Certificate.PrivateKey = PrivateKey ////HERE
-
-	//fmt.Println(PrivateKey)
-
-	Configuration := tls.Config{}
-	Configuration.Certificates = append(Configuration.Certificates, tls_Certificate)
-	Configuration.MinVersion = tls.VersionTLS12
-	Configuration.MaxVersion = tls.VersionTLS13
-	//AllowedCiphers := []uint16{tls.TLS_CHACHA20_POLY1305_SHA256}
-	//Configuration.CipherSuites = AllowedCiphers
-	Configuration.ClientAuth = tls.NoClientCert //RequireAndVerifyClientCert
-	//Configuration.InsecureSkipVerify = true     ////TODO REMOVE  THIS!--->TESTING PURPOSE ONLY.
-	//Configuration.VerifyConnection = nil
-	//Configuration.VerifyPeerCertificate = nil
 	listen_port, _ := GetFreePort("0")
 
 	lport_int, _ := strconv.Atoi(listen_port)
@@ -2568,22 +2831,105 @@ func StartSSLServer(ip string) {
 	f.Write(Client_CA)
 	f.Close()
 
+	f, err = os.Create("ServerCA.crt")
+	if err != nil {
+		panic(err)
+	}
+	f.Write(CaCertificate)
+	f.Close()
+
 	//TCP_Conn.Close()
 
 	//time.Sleep(time.Millisecond * 1000) ///TODO...DROP this on the internet.
 
-	//x509ClientCaCertificate, err := x509.ParseCertificate(Client_CA)
+	x509ClientCaCertificate, err := x509.ParseCertificate(Client_CA)
+	if err != nil {
+		panic(err)
+	}
+
+	client_Hostname := x509ClientCaCertificate.Subject.CommonName
+
+	//Remote_IP := strings.Split(TCP_Conn.RemoteAddr().String(), ":")[0]
+
+	ClientCertificate, _, Private_Key_Pem_bytes := ForgeCertificate(client_Hostname, ip, false, true, CaCertificate, CAPrivateKey) //CA Signed Certificate
+
+	//ServerCertificate, _, Private_Key_Pem_bytes := ForgeCertificate(client_Hostname, Remote_IP, false, true, CaCertificate, CAPrivateKey) //CA Signed Certificate
+
+	//PutIntermediaryCert(TCP_Conn, ServerCertificate) //issuing...
+
+	//ClientCertificate := FetchIntermediaryCert(TCP_Conn)
+
+	//PutIntermediaryPrivateKey(TCP_Conn, Private_Key_Pem_bytes)
+
+	//ClientPEMPrivateKey := FetchIntermediaryPrivateKey(TCP_Conn)
+
+	x509Certificate, err := x509.ParseCertificate(ClientCertificate)
+	if err != nil {
+		panic(err)
+	}
+
+	x509CaCertificate, err := x509.ParseCertificate(CaCertificate)
+	if err != nil {
+		panic(err)
+	}
+
+	var Certificate_Pem pem.Block
+	Certificate_Pem.Type = "CERTIFICATE"
+	Certificate_Pem.Bytes = x509Certificate.Raw
+
+	var Private_Key_Pem pem.Block
+	Private_Key_Pem.Type = "PRIVATE KEY"
+	Private_Key_Pem.Bytes = Private_Key_Pem_bytes //ClientPEMPrivateKey
+	//fmt.Println(string(pem.EncodeToMemory(&Private_Key_Pem)))
+
+	tls_Certificate, err := tls.X509KeyPair(pem.EncodeToMemory(&Certificate_Pem), pem.EncodeToMemory(&Private_Key_Pem))
+	if err != nil {
+		panic(err)
+	}
+
+	//f, err = os.Create("PrivateKey.PEM")
 	//if err != nil {
 	//	panic(err)
 	//}
+	//f.Write(pem.EncodeToMemory(&Private_Key_Pem))
+	//f.Close()
 
-	roots := x509.NewCertPool()
+	tls_Certificate.Leaf = x509Certificate
+	//tls_Certificate.PrivateKey = PrivateKey ////HERE
+
+	//fmt.Println(PrivateKey)
+
+	Configuration := tls.Config{}
+	Configuration.Certificates = append(Configuration.Certificates, tls_Certificate)
+
+	h, err := os.Create("ServerIntermediary.crt")
+	if err != nil {
+		panic(err)
+	}
+	h.Write(tls_Certificate.Leaf.Raw)
+	//h.Write(pem.EncodeToMemory(&Certificate_Pem))
+	h.Close()
+
+	Configuration.MinVersion = tls.VersionTLS12
+	Configuration.MaxVersion = tls.VersionTLS13
+	//AllowedCiphers := []uint16{tls.TLS_CHACHA20_POLY1305_SHA256}
+	//Configuration.CipherSuites = AllowedCiphers
+	Configuration.ClientAuth = tls.RequireAndVerifyClientCert
+	//Configuration.InsecureSkipVerify = true                   ////TODO REMOVE  THIS!--->TESTING PURPOSE ONLY.
+	//Configuration.VerifyConnection = nil
+	//Configuration.VerifyPeerCertificate = nil
+	ServerRoots := x509.NewCertPool()
 	//roots.AddCert(x509CaCertificate)
 	//roots.AddCert(x509ClientCaCertificate) //Client's
-	roots.AddCert(x509CaCertificate) //Server's
+	ServerRoots.AddCert(x509CaCertificate) //Server's //x509CaCertificate
+	//ServerRoots.AddCert(x509ClientCaCertificate) //Client's
 
-	//Configuration.ClientCAs = roots
-	Configuration.RootCAs = roots
+	ClientRoots := x509.NewCertPool()
+	ClientRoots.AddCert(x509ClientCaCertificate)
+
+	Configuration.ClientCAs = ClientRoots
+	Configuration.RootCAs = ServerRoots
+	Configuration.SessionTicketsDisabled = true
 
 	SSL_listen, err := tls.Listen("tcp", "0.0.0.0:"+listen_port, &Configuration)
 	if err != nil {
@@ -2598,7 +2944,7 @@ func StartSSLServer(ip string) {
 	////////////////////////Rate limiting.
 	////////////////////////SetNoDelay
 
-	Configuration.ServerName = x509CaCertificate.Subject.CommonName
+	Configuration.ServerName = x509CaCertificate.Subject.CommonName //x509ClientCaCertificate.Subject.CommonName
 
 	tls_Conn := tls.Server(net_Conn, &Configuration)
 
@@ -2621,10 +2967,6 @@ func StartSSLServer(ip string) {
 		},
 	}
 	*/
-	err = tls_Conn.SetDeadline(time.Now().Add(time.Minute)) //minute and a half
-	if err != nil {
-		panic(err)
-	}
 	//if err != nil {
 	//	panic(err)
 	//}
@@ -2635,21 +2977,40 @@ func StartSSLServer(ip string) {
 	//
 
 	//bfile := make([]byte, 60000)
-	var file []byte
+	//var file []byte
 	//n, err := net_Conn.Read(file)
 	//if err != nil {
 	//	panic(err)
 	//}
 
-	err = tls_Conn.Handshake()
+	//err = tls_Conn.Handshake()
+	//if err != nil {
+	//	panic(err)
+	//}
+	err = tls_Conn.SetDeadline(time.Now().Add(time.Second)) //1000ms
 	if err != nil {
 		panic(err)
 	}
 
-	_, err = tls_Conn.Read(file) ///HERE
-	if err != nil {
-		panic(err)
+	Total_Bytes := 0
+	n := 0
+	for {
+		n, err = tls_Conn.NetConn().Read(buffer_Uploaded_File) //netConn
+		if err != nil {
+			//panic(err)
+			break //io-timeout or EOF...or other...
+		}
+		Total_Bytes += n
+		Uploaded_File = append(Uploaded_File, buffer_Uploaded_File[:n]...)
+		tls_Conn.SetReadDeadline(time.Now().Add(time.Second))
 	}
+
+	fmt.Println(Total_Bytes)
+
+	//_, err = tls_Conn.Read(file) ///HERE
+	//if err != nil {
+	//	panic(err)
+	//}
 	//	if err != nil {
 	//		if err == io.EOF {
 	//			break
@@ -2665,88 +3026,37 @@ func StartSSLServer(ip string) {
 	fmt.Println("File received!")
 
 	Checksum := md5.New()
-	//Checksum.Write(file)
+	Checksum.Write(Uploaded_File)
 
-	//fmt.Println(file)
+	fmt.Println(hex.EncodeToString(Checksum.Sum(nil)))
+	fmt.Println(len(Uploaded_File))
 
-	_, MP3DiffFileName := ReadDB(hex.EncodeToString(Checksum.Sum(nil)))
+	_, MP3DiffFileName, CompleteFilename := ReadDB(hex.EncodeToString(Checksum.Sum(nil)))
 
 	fmt.Println(MP3DiffFileName)
+	fmt.Println(CompleteFilename)
 
-	//NbEntriesDiffFile := "||DIFF||" + strings.Split(MP3DiffFileName, "||")[2]
+	Data_MP3Diff, err := os.ReadFile("DATABASE/" + MP3DiffFileName)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Data_MP3Diff=", len(Data_MP3Diff))
 
-	//fmt.Println("----->", len([]byte(NbEntriesDiffFile)))
-
-	temp_file, err := os.Create(MP3DiffFileName)
+	Data_Complete, err := os.ReadFile("DATABASE/" + CompleteFilename)
 	if err != nil {
 		panic(err)
 	}
 
-	g := io.Writer(temp_file)
+	fmt.Println("Data_Complete=", len(Data_Complete))
 
-	err = binary.Write(g, binary.LittleEndian, ReadDiffFile(MP3DiffFileName))
-	if err != nil {
-		panic(err)
-	}
+	//Sending DBs
 
-	temp_file.Close()
+	tls_Conn.SetDeadline(time.Now().Add(time.Minute * 2))
 
-	Data, err := os.ReadFile(MP3DiffFileName)
-	if err != nil {
-		panic(err)
-	}
-	Erase(MP3DiffFileName)
+	Total_Bytes_Sent := SendDatabases(tls_Conn, CompleteFilename, Data_Complete, MP3DiffFileName, Data_MP3Diff)
 
-	_, err = tls_Conn.Write(Data)
+	fmt.Println(Total_Bytes_Sent)
 
-	//DiffFile := md5.New() //set to compare later.
-	//DiffFile.Write(Data)
-
-	//fmt.Println("Data--->", len(Data))
-	/*
-		NumPackets := (len(Data) / last_payload_size) + 1
-		Data2 := NumPackets * last_payload_size
-		Remainder := last_payload_size - (Data2 - len(Data))
-
-		Downloaded_File := []byte{}
-
-		for i := 0; i < NumPackets; i++ {
-			//fmt.Println(Data2)'
-			//fmt.Println(i)
-			Data2 = Data2 - last_payload_size
-			if Data2 > 0 {
-				SSL_packet := Data[i*last_payload_size : (i*last_payload_size)+last_payload_size]
-				//fmt.Println(i*8192, "<--->", (i*8192)+8192)
-				Downloaded_File = append(Downloaded_File, SSL_packet...)
-				_, err := tls_Conn.Write(SSL_packet)
-				if err != nil {
-					panic(err)
-				}
-			} else { //last packet
-				SSL_packet = Data[i*last_payload_size : i*last_payload_size+Remainder]
-				Downloaded_File = append(Downloaded_File, SSL_packet...)
-				//fmt.Println(i*8192, "<--->", i*8192+Remainder)
-				_, err := tls_Conn.Write(SSL_packet)
-				if err != nil {
-					panic(err)
-				}
-				SSL_packet = append(SSL_packet, []byte(NbEntriesDiffFile)...) //filename infos
-				time.Sleep(time.Millisecond * 10)
-				_, err = tls_Conn.Write(SSL_packet)
-				if err != nil {
-					panic(err)
-				}
-
-			}
-			time.Sleep(time.Millisecond * 10)
-		}
-		Downloaded := md5.New()
-		Downloaded.Write(Downloaded_File)
-
-		if strings.Compare(hex.EncodeToString(DiffFile.Sum(nil)), hex.EncodeToString(Downloaded.Sum(nil))) == 0 {
-			fmt.Println(hex.EncodeToString(Checksum.Sum(nil)), "-->File sent Successfully!")
-		}
-	*/
 	tls_Conn.Close()
 
 }
@@ -2794,7 +3104,7 @@ func StartUDPServer() {
 	Checksum := md5.New()
 	Checksum.Write(Uploaded_File)
 
-	_, MP3DiffFileName := ReadDB(hex.EncodeToString(Checksum.Sum(nil)))
+	_, MP3DiffFileName, _ := ReadDB(hex.EncodeToString(Checksum.Sum(nil)))
 
 	//fmt.Println(MP3DiffFileName)
 
@@ -3435,6 +3745,7 @@ func ValidateArguments(Arguments []string) ([]string, error) {
 func DisplayUsage() {
 	fmt.Println("-== WAV2GO ==-")
 	fmt.Println("WAV2GO: depends on ffmpeg binaries...")
+	fmt.Println("WAV2GO: -h [File to Conceal]")
 	fmt.Println("WAV2GO: -w [Original Wave filename] -h [File to Conceal] -o [Destination MP3]")
 	fmt.Println("WAV2GO: -r [MP3 Stegged filename] ... recover file")
 	fmt.Println("WAV2GO: -s ... DB server mode")
